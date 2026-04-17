@@ -43,21 +43,21 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod download
-          go build -ldflags="-s -w" -trimpath -o ix-yt-szbgp-dns .
+          go build -ldflags="-s -w" -trimpath -o ix-cloudbgp-dns .
           
       - name: Package binary
         run: |
           mkdir -p package
-          cp ix-yt-szbgp-dns package/
+          cp ix-cloudbgp-dns package/
           cp cn-ipv4.list package/
           cp cn-ipv6.list package/
           cd package
-          tar czf ../ix-yt-szbgp-dns-${{ matrix.name }}.tar.gz *
+          tar czf ../ix-cloudbgp-dns-${{ matrix.name }}.tar.gz *
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ix-yt-szbgp-dns-${{ matrix.name }}
+          name: ix-cloudbgp-dns-${{ matrix.name }}
           path: '*.tar.gz'
           retention-days: 1
   
