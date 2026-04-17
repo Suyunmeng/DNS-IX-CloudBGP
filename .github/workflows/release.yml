@@ -50,6 +50,7 @@ jobs:
           mkdir -p package
           cp ix-yt-szbgp-dns package/
           cp cn-ipv4.list package/
+          cp cn-ipv6.list package/
           cd package
           tar czf ../ix-yt-szbgp-dns-${{ matrix.name }}.tar.gz *
       
