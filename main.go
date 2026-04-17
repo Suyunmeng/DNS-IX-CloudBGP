@@ -13,6 +13,7 @@ import (
 
 var (
 	cnIPv4Nets []*net.IPNet
+	cnIPv6Nets []*net.IPNet
 )
 
 // DNS cache entry with expiration
@@ -152,28 +153,31 @@ func getCacheKey(r *dns.Msg) string {
 	return q.Name + ":" + dns.TypeToString[q.Qtype]
 }
 
-func filterIPv6AndPickIPv4(rrs []dns.RR, match func(net.IP) bool) ([]dns.RR, int) {
+func filterIPRecords(rrs []dns.RR, matchIPv4, matchIPv6 func(net.IP) bool) ([]dns.RR, int) {
 	filtered := make([]dns.RR, 0, len(rrs))
-	matchedIPv4 := 0
+	matchedIP := 0
 
 	for _, rr := range rrs {
 		switch v := rr.(type) {
 		case *dns.A:
-			if match == nil || match(v.A) {
+			if matchIPv4 == nil || matchIPv4(v.A) {
 				filtered = append(filtered, rr)
-				matchedIPv4++
+				matchedIP++
 			}
 		case *dns.AAAA:
-			continue
+			if matchIPv6 == nil || matchIPv6(v.AAAA) {
+				filtered = append(filtered, rr)
+				matchedIP++
+			}
 		default:
 			filtered = append(filtered, rr)
 		}
 	}
 
-	return filtered, matchedIPv4
+	return filtered, matchedIP
 }
 
-func buildFilteredResponse(req *dns.Msg, upstream *dns.Msg, match func(net.IP) bool) (*dns.Msg, int) {
+func buildFilteredResponse(req *dns.Msg, upstream *dns.Msg, matchIPv4, matchIPv6 func(net.IP) bool) (*dns.Msg, int) {
 	if upstream == nil {
 		return nil, 0
 	}
@@ -181,12 +185,12 @@ func buildFilteredResponse(req *dns.Msg, upstream *dns.Msg, match func(net.IP) b
 	filtered := upstream.Copy()
 	filtered.Id = req.Id
 
-	var matchedIPv4 int
-	filtered.Answer, matchedIPv4 = filterIPv6AndPickIPv4(upstream.Answer, match)
-	filtered.Ns, _ = filterIPv6AndPickIPv4(upstream.Ns, nil)
-	filtered.Extra, _ = filterIPv6AndPickIPv4(upstream.Extra, nil)
+	var matchedIP int
+	filtered.Answer, matchedIP = filterIPRecords(upstream.Answer, matchIPv4, matchIPv6)
+	filtered.Ns, _ = filterIPRecords(upstream.Ns, nil, nil)
+	filtered.Extra, _ = filterIPRecords(upstream.Extra, nil, nil)
 
-	return filtered, matchedIPv4
+	return filtered, matchedIP
 }
 
 func writeServFail(w dns.ResponseWriter, req *dns.Msg) {
@@ -220,7 +224,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeServFail(w, r)
 			return
 		}
-		filteredFallback, _ := buildFilteredResponse(r, resp, nil)
+		filteredFallback, _ := buildFilteredResponse(r, resp, nil, nil)
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredFallback, getMinTTL(filteredFallback))
 		}
@@ -228,10 +232,12 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	filteredPrimary, matchedIPv4 := buildFilteredResponse(r, resp, func(ip net.IP) bool {
+	filteredPrimary, matchedIP := buildFilteredResponse(r, resp, func(ip net.IP) bool {
 		return isInIPNets(ip, cnIPv4Nets)
+	}, func(ip net.IP) bool {
+		return isInIPNets(ip, cnIPv6Nets)
 	})
-	if matchedIPv4 > 0 {
+	if matchedIP > 0 {
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredPrimary, getMinTTL(filteredPrimary))
 		}
@@ -239,7 +245,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	log.Printf("no primary IPv4 match in CN list, fallback to %s", fallbackDNS)
+	log.Printf("no primary IP match in CN lists, fallback to %s", fallbackDNS)
 	fallbackResp, err := queryDNS(r, fallbackDNS)
 	if err != nil || fallbackResp == nil {
 		log.Printf("fallback DNS failed: %v", err)
@@ -247,7 +253,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	filteredFallback, _ := buildFilteredResponse(r, fallbackResp, nil)
+	filteredFallback, _ := buildFilteredResponse(r, fallbackResp, nil, nil)
 	if cacheKey != "" {
 		cache.Set(cacheKey, filteredFallback, getMinTTL(filteredFallback))
 	}
@@ -259,6 +265,10 @@ func main() {
 	cnIPv4Nets, err = loadIPList("cn-ipv4.list")
 	if err != nil {
 		log.Fatalf("failed to load cn-ipv4.list: %v", err)
+	}
+	cnIPv6Nets, err = loadIPList("cn-ipv6.list")
+	if err != nil {
+		log.Fatalf("failed to load cn-ipv6.list: %v", err)
 	}
 
 	// Start cache cleanup goroutine
