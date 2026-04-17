@@ -1,4 +1,4 @@
-name: Update IPv4 List
+name: Update IP Lists
 
 on:
   schedule:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   update:
-    name: Update IPv4 List
+    name: Update IP Lists
     runs-on: ubuntu-latest
     
     steps:
@@ -30,6 +30,14 @@ jobs:
             > cn-ipv4.list
           sort -u cn-ipv4.list -o cn-ipv4.list
           echo "cn-ipv4.list updated: $(wc -l < cn-ipv4.list) entries"
+
+      - name: Download cn-ipv6.list
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/china6.txt \
+            > cn-ipv6.list
+          sort -u cn-ipv6.list -o cn-ipv6.list
+          echo "cn-ipv6.list updated: $(wc -l < cn-ipv6.list) entries"
       
       - name: Check for changes
         id: check_changes
@@ -38,7 +46,7 @@ jobs:
             echo "Force update enabled, skipping change detection"
             echo "changed=true" >> $GITHUB_OUTPUT
           else
-            git diff --quiet cn-ipv4.list || echo "changed=true" >> $GITHUB_OUTPUT
+            git diff --quiet cn-ipv4.list cn-ipv6.list || echo "changed=true" >> $GITHUB_OUTPUT
           fi
       
       - name: Commit and push if changed
@@ -46,16 +54,16 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add cn-ipv4.list
+          git add cn-ipv4.list cn-ipv6.list
           
           if [ "${{ github.event.inputs.force }}" = "true" ]; then
-            git commit -m "chore(lists): force update cn-ipv4.list $(date -u '+%Y-%m-%d')" || echo "No files to commit"
+            git commit -m "chore(lists): force update cn-ipv4.list and cn-ipv6.list $(date -u '+%Y-%m-%d')" || echo "No files to commit"
           else
-            git commit -m "chore(lists): update cn-ipv4.list $(date -u '+%Y-%m-%d')"
+            git commit -m "chore(lists): update cn-ipv4.list and cn-ipv6.list $(date -u '+%Y-%m-%d')"
           fi
           
           git push
       
       - name: No changes detected
         if: steps.check_changes.outputs.changed != 'true'
-        run: echo "No changes detected in cn-ipv4.list"
+        run: echo "No changes detected in cn-ipv4.list or cn-ipv6.list"
