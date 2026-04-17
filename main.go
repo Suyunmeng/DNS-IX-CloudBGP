@@ -153,6 +153,18 @@ func getCacheKey(r *dns.Msg) string {
 	return q.Name + ":" + dns.TypeToString[q.Qtype]
 }
 
+func isAAAAOnlyQuery(r *dns.Msg) bool {
+	if len(r.Question) == 0 {
+		return false
+	}
+	for _, q := range r.Question {
+		if q.Qtype != dns.TypeAAAA {
+			return false
+		}
+	}
+	return true
+}
+
 func filterIPRecords(rrs []dns.RR, matchIPv4, matchIPv6 func(net.IP) bool) ([]dns.RR, int) {
 	filtered := make([]dns.RR, 0, len(rrs))
 	matchedIP := 0
@@ -202,6 +214,9 @@ func writeServFail(w dns.ResponseWriter, req *dns.Msg) {
 func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	primaryDNS := "119.29.29.29:53"
 	fallbackDNS := "1.1.1.1:53"
+	matchCNIPv6 := func(ip net.IP) bool {
+		return isInIPNets(ip, cnIPv6Nets)
+	}
 
 	// Check cache first
 	cacheKey := getCacheKey(r)
@@ -224,7 +239,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			writeServFail(w, r)
 			return
 		}
-		filteredFallback, _ := buildFilteredResponse(r, resp, nil, nil)
+		filteredFallback, _ := buildFilteredResponse(r, resp, nil, matchCNIPv6)
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredFallback, getMinTTL(filteredFallback))
 		}
@@ -234,10 +249,17 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	filteredPrimary, matchedIP := buildFilteredResponse(r, resp, func(ip net.IP) bool {
 		return isInIPNets(ip, cnIPv4Nets)
-	}, func(ip net.IP) bool {
-		return isInIPNets(ip, cnIPv6Nets)
-	})
+	}, matchCNIPv6)
 	if matchedIP > 0 {
+		if cacheKey != "" {
+			cache.Set(cacheKey, filteredPrimary, getMinTTL(filteredPrimary))
+		}
+		w.WriteMsg(filteredPrimary)
+		return
+	}
+
+	if isAAAAOnlyQuery(r) {
+		log.Printf("no primary IPv6 match in CN list, dropping unmatched IPv6")
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredPrimary, getMinTTL(filteredPrimary))
 		}
@@ -253,7 +275,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	filteredFallback, _ := buildFilteredResponse(r, fallbackResp, nil, nil)
+	filteredFallback, _ := buildFilteredResponse(r, fallbackResp, nil, matchCNIPv6)
 	if cacheKey != "" {
 		cache.Set(cacheKey, filteredFallback, getMinTTL(filteredFallback))
 	}
